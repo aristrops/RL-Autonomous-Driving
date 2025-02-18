@@ -4,6 +4,7 @@ import numpy as np
 import torch
 import random
 
+import your_baseline
 
 # Set the seed and create the environment
 np.random.seed(0)
@@ -17,8 +18,8 @@ env = gymnasium.make(env_name,
                      render_mode='human')
 
 # Initialize your model and load parameters
-agent = None
-raise NotImplementedError
+# agent = None
+# raise NotImplementedError
 
 # Evaluation loop
 state, _ = env.reset()
@@ -32,8 +33,7 @@ episode_return = 0
 while episode <= 10:
     episode_steps += 1
     # Select the action to be performed by the agent
-    action = None
-    raise NotImplementedError
+    action = your_baseline.baseline_policy(state)
 
     # Hint: take a look at the docs to see the difference between 'done' and 'truncated'
     state, reward, done, truncated, _ = env.step(action)
