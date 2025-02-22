@@ -44,8 +44,8 @@ def baseline_policy(observation):
     if front_vehicle is not None and front_vehicle[1] < safe_distance:
         if left_vehicle is None or left_vehicle[1] > safe_distance:
             action = 0
-        # else:
-        #     action = 4
+        else:
+            action = 4
 
     return action
 
