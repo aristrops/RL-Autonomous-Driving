@@ -43,11 +43,11 @@ class DQN(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(DQN, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(state_dim, 128),
+            nn.Linear(state_dim, 256),
             nn.ReLU(),
-            nn.Linear(128, 128),
+            nn.Linear(256, 512),
             nn.ReLU(),
-            nn.Linear(128, action_dim)
+            nn.Linear(512, action_dim)
         )
 
     def forward(self, x):
@@ -61,12 +61,12 @@ policy_net = DQN(state_dim, action_dim).to(device)
 target_net = DQN(state_dim, action_dim).to(device)
 target_net.load_state_dict(policy_net.state_dict()) #set the weights of the target network to be the same as those of the policy network
 target_net.eval() #don't update the parameters of the target network
-optimizer = optim.Adam(policy_net.parameters(), lr=1e-3)
-replay_buffer = ReplayBuffer(10000)
+optimizer = optim.Adam(policy_net.parameters(), lr=1e-4)
+replay_buffer = ReplayBuffer(50000)
 
 epsilon = 1.0
 eps_end = 0.01
-eps_decay = 500
+eps_decay = 500 #higher implies a slower decay
 gamma = 0.99
 batch_size = 32
 target_update = 10
@@ -133,7 +133,7 @@ for t in range(MAX_STEPS):
         # Save training information and model parameters (only when performance improves)
         if episode_return > best_return:
             best_return = episode_return
-            torch.save(policy_net.state_dict(), f"first_dqn_highway_episode{episode}.pth")
+            torch.save(policy_net.state_dict(), f"first_dqn_highway_best.pth")
 
         state, _ = env.reset()
         state = state.reshape(-1)
