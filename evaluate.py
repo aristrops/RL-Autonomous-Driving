@@ -24,11 +24,13 @@ class DQN(nn.Module):
     def __init__(self, state_dim, action_dim):
         super(DQN, self).__init__()
         self.fc = nn.Sequential(
-            nn.Linear(state_dim, 256),
+            nn.Linear(state_dim, 64),
             nn.ReLU(),
-            nn.Linear(256, 512),
+            nn.Linear(64, 128),
             nn.ReLU(),
-            nn.Linear(512, action_dim)
+            nn.Linear(128, 256),
+            nn.ReLU(),
+            nn.Linear(256, action_dim)
         )
 
     def forward(self, x):
@@ -38,7 +40,7 @@ class DQN(nn.Module):
 state_dim = 5*5
 action_dim = env.action_space.n
 agent = DQN(state_dim, action_dim).to(device)
-agent.load_state_dict(torch.load("first_dqn_highway_best.pth", map_location=device))
+agent.load_state_dict(torch.load("Fourth_DQN/fourth_dqn_highway_last.pth", map_location=device))
 agent.eval()
 
 
