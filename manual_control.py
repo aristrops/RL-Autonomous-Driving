@@ -6,7 +6,7 @@ import highway_env
 
 env_name = "highway-v0"
 env = gymnasium.make(env_name,
-                     config={"manual_control": True, "lanes_count": 3, "ego_spacing": 1.5},
+                     config={"manual_control": True, "lanes_count": 16, "ego_spacing": 1.5, 'vehicles_count': 500},
                      render_mode='human')
 
 env.reset()

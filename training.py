@@ -20,25 +20,26 @@ env_name = "highway-fast-v0"  # We use the 'fast' env just for faster training, 
 env = gymnasium.make(env_name,
                      config={'action': {'type': 'DiscreteMetaAction'}, 'duration': 40, "vehicles_count": 50})
 
-#initialize the parameters
+# initialize the parameters
 state_dim = env.observation_space.shape
 action_dim = env.action_space.n
 
-gamma = 0.99
-learning_rate = 1e-4
+gamma = 0.8
+learning_rate = 5e-4
 alpha = 0.6
-epsilon = 1.0
-eps_end = 0.01
-eps_decay = 0.995
+# epsilon = 1.0
+# eps_end = 0.01
+# eps_decay = 0.995
 beta = 0.4
 beta_increment = 0.001
-target_update_freq = 20
+target_update_freq = 10
 batch_size = 32
-buffer_size = 50000
+buffer_size = 15000
+learning_starts = 200
 
 #keep track of the best results and save checkpoints
 checkpoint_freq = 20
-save_dir = "First_DDQN"
+save_dir = "First_DuelDQN"
 checkpoint_path = os.path.join(save_dir, "checkpoints")
 os.makedirs(checkpoint_path, exist_ok = True)
 
@@ -47,14 +48,43 @@ os.makedirs(checkpoint_path, exist_ok = True)
 class QNet(nn.Module):
     def __init__(self, input_dim, output_dim):
         super(QNet, self).__init__()
-        self.fc1 = nn.Linear(input_dim[0], 128),
-        self.fc2 = nn.Linear(128, 256),
+        flattened_input_dim = input_dim[0] * input_dim[1]
+        self.fc1 = nn.Linear(flattened_input_dim, 256)
+        self.fc2 = nn.Linear(256, 256)
         self.fc3 = nn.Linear(256, output_dim)
 
     def forward(self, x):
         x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x)
+
+
+#create dueling Q-network
+class DuelingQNet(nn.Module):
+    def __init__(self, input_dim, output_dim):
+        super(DuelingQNet, self).__init__()
+        flattened_input_dim = input_dim[0] * input_dim[1]
+        self.fc1 = nn.Linear(flattened_input_dim, 256)
+
+        self.value_fc = nn.Linear(256, 512)
+        self.value = nn.Linear(512, 1) #output a single scalar per state
+
+        self.advantage_fc = nn.Linear(256, 512)
+        self.advantage = nn.Linear(512, output_dim) #output a vector with one entry per action
+
+    def forward(self, x):
+        if len(x.shape) > 2: #flatten if needed
+            x = x.view(x.size(0), -1)
+        x = torch.relu(self.fc1(x)) #pass through the shared layer
+
+        value = torch.relu(self.value_fc(x))
+        value = self.value(value)
+
+        advantage = torch.relu(self.advantage_fc(x))
+        advantage = self.advantage(advantage)
+
+        q_values = value + advantage - advantage.mean(dim = 1, keepdim = True)
+        return q_values
 
 
 #create prioritized experience replay buffer
@@ -106,7 +136,7 @@ class DQNAgent:
     def __init__(self, state_dim, action_dim):
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.epsilon = epsilon
+        # self.epsilon = epsilon
         self.beta = beta
 
         self.q_net = QNet(state_dim, action_dim).to(device)
@@ -119,12 +149,17 @@ class DQNAgent:
 
         self.best_reward = -float("inf")
 
-    def select_action(self, state):
-        if random.random() < self.epsilon:
-            return env.action_space.sample()
+    #use a softmax exploration
+    def select_action(self, state, temperature = 1.0):
         state = torch.FloatTensor(state).unsqueeze(0).to(device)
         with torch.no_grad():
-            return torch.argmax(self.q_net(state)).item()
+            q_values = self.q_net(state).squeeze() #get q-values for all the actions
+
+        probabilities = torch.nn.functional.softmax(q_values / temperature, dim = 0).cpu().numpy()
+
+        action = np.random.choice(len(probabilities), p = probabilities)
+
+        return action
 
     def store_experience(self, state, action, reward, next_state, done, error):
         self.memory.push(state, action, reward, next_state, done, error)
@@ -147,7 +182,7 @@ class DQNAgent:
         targets = rewards + gamma * target_q_values * (1 - dones)
 
         current_q_values = self.q_net(states).gather(1, actions).squeeze()
-        errors = torch.abs(current_q_values - targets).detach().numpy()
+        errors = torch.abs(current_q_values - targets).detach().cpu().numpy()
         self.memory.update_priorities(indices, errors)
 
         loss = (weights * (current_q_values - targets.detach()) ** 2).mean()
@@ -155,7 +190,7 @@ class DQNAgent:
         loss.backward()
         self.optimizer.step()
 
-        self.epsilon = max(eps_end, self.epsilon * eps_decay)
+        # self.epsilon = max(eps_end, self.epsilon * eps_decay)
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.q_net.state_dict())
@@ -163,13 +198,17 @@ class DQNAgent:
     def save_model(self, filename, directory = save_dir):
         torch.save(self.q_net.state_dict(), os.path.join(directory, filename))
 
+    def select_greedy_action(self, state):
+        with torch.no_grad():
+            return torch.argmax(self.q_net(state)).item()
+
 
 #create DDQN
 class DoubleDQNAgent:
     def __init__(self, state_dim, action_dim):
         self.state_dim = state_dim
         self.action_dim = action_dim
-        self.epsilon = epsilon
+        # self.epsilon = epsilon
         self.beta = beta
 
         self.q_net = QNet(state_dim, action_dim).to(device)
@@ -182,12 +221,17 @@ class DoubleDQNAgent:
 
         self.best_reward = -float("inf")
 
-    def select_action(self, state):
-        if random.random() < self.epsilon:
-            return env.action_space.sample()
+    #use a softmax exploration
+    def select_action(self, state, temperature = 1.0):
         state = torch.FloatTensor(state).unsqueeze(0).to(device)
         with torch.no_grad():
-            return torch.argmax(self.q_net(state)).item()
+            q_values = self.q_net(state).squeeze() #get q-values for all the actions
+
+        probabilities = torch.nn.functional.softmax(q_values / temperature, dim = 0).cpu().numpy()
+
+        action = np.random.choice(len(probabilities), p = probabilities)
+
+        return action
 
     def store_experience(self, state, action, reward, next_state, done, error):
         self.memory.push(state, action, reward, next_state, done, error)
@@ -211,7 +255,7 @@ class DoubleDQNAgent:
         targets = rewards + gamma * target_q_values * (1 - dones)
 
         current_q_values = self.q_net(states).gather(1, actions).squeeze()
-        errors = torch.abs(current_q_values - targets).detach().numpy()
+        errors = torch.abs(current_q_values - targets).detach().cpu().numpy()
         self.memory.update_priorities(indices, errors)
 
         loss = (weights * (current_q_values - targets.detach()) ** 2).mean()
@@ -219,7 +263,7 @@ class DoubleDQNAgent:
         loss.backward()
         self.optimizer.step()
 
-        self.epsilon = max(eps_end, self.epsilon * eps_decay)
+        # self.epsilon = max(eps_end, self.epsilon * eps_decay)
 
     def update_target_net(self):
         self.target_net.load_state_dict(self.q_net.state_dict())
@@ -227,61 +271,147 @@ class DoubleDQNAgent:
     def save_model(self, filename, directory = save_dir):
         torch.save(self.q_net.state_dict(), os.path.join(directory, filename))
 
-
-# Initialize your model
-agent = DQNAgent(state_dim, action_dim)
-
-state, _ = env.reset()
-state = state.reshape(-1)
-done, truncated = False, False
-
-episode = 1
-episode_steps = 0
-episode_return = 0
+    def select_greedy_action(self, state):
+        with torch.no_grad():
+            return torch.argmax(self.q_net(state)).item()
 
 
-# Training loop
-for t in range(MAX_STEPS):
-    episode_steps += 1
+#create Dueling DQN
+class DuelingDQNAgent:
+    def __init__(self, state_dim, action_dim):
+        self.state_dim = state_dim
+        self.action_dim = action_dim
+        # self.epsilon = epsilon
+        self.beta = beta
 
-    #select action with epsilon-greedy strategy
-    action = agent.select_action(state)
+        self.q_net = DuelingQNet(state_dim, action_dim).to(device)
+        self.target_net = DuelingQNet(state_dim, action_dim).to(device)
+        self.target_net.load_state_dict(self.q_net.state_dict())
+        self.target_net.eval()
 
-    next_state, reward, done, truncated, _ = env.step(action)
-    next_state = next_state.reshape(-1)
+        self.optimizer = optim.Adam(self.q_net.parameters(), lr = learning_rate)
+        self.memory = ReplayBuffer(buffer_size, alpha)
 
-    error = abs(reward)
+        self.best_reward = -float("inf")
 
-    #store transition in memory
-    agent.store_experience(state, action, reward, next_state, done, error)
+    #use a softmax exploration
+    def select_action(self, state, temperature = 1.0):
+        state = torch.FloatTensor(state).unsqueeze(0).to(device)
+        with torch.no_grad():
+            q_values = self.q_net(state).squeeze() #get q-values for all the actions
 
-    #train the model
-    agent.train()
+        probabilities = torch.nn.functional.softmax(q_values / temperature, dim = 0).cpu().numpy()
 
-    if done or truncated:
-        print(f"Total T: {t} Episode Num: {episode} Episode T: {episode_steps} Return: {episode_return:.3f}")
+        action = np.random.choice(len(probabilities), p = probabilities)
 
-        #save model parameters (only when performance improves)
-        if episode_return > agent.best_reward:
-            agent.best_reward = episode_return
-            agent.save_model("first_ddqn_best_model.pth")
-            print("New best model saved")
+        return action
 
-        #save periodic checkpoint
-        if episode % checkpoint_freq == 0:
-            agent.save_model(f"first_ddqn_checkpoint_{episode}.pth", directory=checkpoint_path)
-            print("Checkpoint saved")
+    def store_experience(self, state, action, reward, next_state, done, error):
+        self.memory.push(state, action, reward, next_state, done, error)
 
-        state, _ = env.reset()
-        state = state.reshape(-1)
-        episode += 1
-        episode_steps = 0
-        episode_return = 0
+    def train(self):
+        if len(self.memory.buffer) < batch_size:
+            return
 
-    #update target network
-    if episode % target_update_freq == 0:
-        agent.update_target_net()
+        states, actions, rewards, next_states, dones, indices, weights = self.memory.sample(batch_size, self.beta)
+        self.beta = min(1.0, self.beta + beta_increment)
 
-agent.save_model("first_ddqn_last.pth")
+        states = torch.FloatTensor(states).to(device)
+        actions = torch.LongTensor(actions).unsqueeze(1).to(device)
+        rewards = torch.FloatTensor(rewards).to(device)
+        next_states = torch.FloatTensor(next_states).to(device)
+        dones = torch.FloatTensor(dones).to(device)
+        weights = torch.FloatTensor(weights).to(device)
 
-env.close()
+        with torch.no_grad():
+            target_q_values = self.target_net(next_states).max(1)[0]
+        targets = rewards + gamma * target_q_values * (1 - dones)
+
+        current_q_values = self.q_net(states).gather(1, actions).squeeze()
+        errors = torch.abs(current_q_values - targets).detach().cpu().numpy()
+        self.memory.update_priorities(indices, errors)
+
+        loss = (weights * (current_q_values - targets.detach()) ** 2).mean()
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
+
+        # self.epsilon = max(eps_end, self.epsilon * eps_decay)
+
+    def update_target_net(self):
+        self.target_net.load_state_dict(self.q_net.state_dict())
+
+    def save_model(self, filename, directory = save_dir):
+        torch.save(self.q_net.state_dict(), os.path.join(directory, filename))
+
+    def select_greedy_action(self, state):
+        with torch.no_grad():
+            return torch.argmax(self.q_net(state)).item()
+
+def main():
+    #initialize your model
+    agent = DuelingDQNAgent(state_dim, action_dim)
+
+    state, _ = env.reset()
+    state = state.reshape(-1)
+    done, truncated = False, False
+
+    episode = 1
+    episode_steps = 0
+    total_steps = 0
+    episode_return = 0
+    temperature = 1.0
+
+    # Training loop
+    for t in range(MAX_STEPS):
+        episode_steps += 1
+        total_steps += 1
+
+        temperature = max(0.1, temperature * 0.99) #gradually shift towards exploitation
+        action = agent.select_action(state, temperature)
+
+        next_state, reward, done, truncated, _ = env.step(action)
+        next_state = next_state.reshape(-1)
+
+        error = abs(reward)
+
+        #store transition in memory
+        agent.store_experience(state, action, reward, next_state, done, error)
+
+        #train the model
+        if total_steps > learning_starts:
+            agent.train()
+
+        state = next_state
+        episode_return += reward
+
+        if done or truncated:
+            print(f"Total T: {t} Episode Num: {episode} Episode T: {episode_steps} Return: {episode_return:.3f}")
+
+            #save model parameters (only when performance improves)
+            if episode_return > agent.best_reward:
+                agent.best_reward = episode_return
+                agent.save_model("first_dueldqn_best_model.pth")
+                print("New best model saved")
+
+            #save periodic checkpoint
+            if episode % checkpoint_freq == 0:
+                agent.save_model(f"first_dueldqn_checkpoint_{episode}.pth", directory=checkpoint_path)
+                print("Checkpoint saved")
+
+            state, _ = env.reset()
+            state = state.reshape(-1)
+            episode += 1
+            episode_steps = 0
+            episode_return = 0
+
+        #update target network
+        if episode % target_update_freq == 0:
+            agent.update_target_net()
+
+    agent.save_model("first_dueldqn_last_model.pth")
+
+    env.close()
+
+if __name__ == "__main__":
+    main()

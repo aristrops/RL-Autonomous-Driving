@@ -5,6 +5,7 @@ import torch
 from torch import nn
 import random
 from your_baseline import baseline_policy
+from training import DQNAgent, DoubleDQNAgent, DuelingDQNAgent
 
 # Set the seed and create the environment
 np.random.seed(0)
@@ -19,30 +20,13 @@ env = gymnasium.make(env_name,
 
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-#define models
-class DQN(nn.Module):
-    def __init__(self, state_dim, action_dim):
-        super(DQN, self).__init__()
-        self.fc = nn.Sequential(
-            nn.Linear(state_dim, 64),
-            nn.ReLU(),
-            nn.Linear(64, 128),
-            nn.ReLU(),
-            nn.Linear(128, 256),
-            nn.ReLU(),
-            nn.Linear(256, action_dim)
-        )
 
-    def forward(self, x):
-        return self.fc(x)
-
-# Initialize your model and load parameters
-state_dim = 5*5
+#initialize your model and load parameters
+state_dim = env.observation_space.shape
 action_dim = env.action_space.n
-agent = DQN(state_dim, action_dim).to(device)
-agent.load_state_dict(torch.load("Fourth_DQN/fourth_dqn_highway_last.pth", map_location=device))
-agent.eval()
-
+agent = DuelingDQNAgent(state_dim, action_dim)
+agent.q_net.load_state_dict(torch.load("First_DuelDQN/first_dueldqn_best_model.pth", map_location=device))
+agent.q_net.eval()
 
 # Evaluation loop
 state, _ = env.reset()
@@ -52,13 +36,13 @@ done, truncated = False, False
 episode = 1
 episode_steps = 0
 episode_return = 0
+episodes_return = []
 
 while episode <= 10:
     episode_steps += 1
     # Select the action to be performed by the agent
-    with torch.no_grad():
-        state_tensor = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
-        action = agent(state_tensor).argmax(dim=1).item()
+    state_tensor = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+    action = agent.select_greedy_action(state_tensor)
     # action = baseline_policy(state)
 
     state, reward, done, truncated, _ = env.step(action)
@@ -70,10 +54,13 @@ while episode <= 10:
     if done or truncated:
         print(f"Episode Num: {episode} Episode T: {episode_steps} Return: {episode_return:.3f}, Crash: {done}")
 
+        episodes_return.append(episode_return)
         state, _ = env.reset()
         state = state.reshape(-1)
         episode += 1
         episode_steps = 0
         episode_return = 0
+
+print("Average Return: {:.3f}".format(np.mean(episodes_return)))
 
 env.close()
