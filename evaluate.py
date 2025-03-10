@@ -5,7 +5,7 @@ import torch
 from torch import nn
 import random
 from your_baseline import baseline_policy
-from training import DQNAgent, DoubleDQNAgent, DuelingDQNAgent
+from training import DoubleDQN, DuelingDQN, D3QN, DuelingQNet
 
 # Set the seed and create the environment
 np.random.seed(0)
@@ -24,8 +24,8 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 #initialize your model and load parameters
 state_dim = env.observation_space.shape
 action_dim = env.action_space.n
-agent = DuelingDQNAgent(state_dim, action_dim)
-agent.q_net.load_state_dict(torch.load("First_DuelDQN/first_dueldqn_best_model.pth", map_location=device))
+agent = D3QN(state_dim, action_dim)
+agent.q_net.load_state_dict(torch.load("Final_D3QN_2/last_model.pth", map_location=device))
 agent.q_net.eval()
 
 # Evaluation loop
@@ -37,6 +37,8 @@ episode = 1
 episode_steps = 0
 episode_return = 0
 episodes_return = []
+crashes = 0
+success_rates = []
 
 while episode <= 10:
     episode_steps += 1
@@ -51,10 +53,14 @@ while episode <= 10:
 
     episode_return += reward
 
+    if done:
+        crashes += 1
+
     if done or truncated:
         print(f"Episode Num: {episode} Episode T: {episode_steps} Return: {episode_return:.3f}, Crash: {done}")
 
         episodes_return.append(episode_return)
+        success_rates.append(100 * episode_steps/40)
         state, _ = env.reset()
         state = state.reshape(-1)
         episode += 1
@@ -62,5 +68,7 @@ while episode <= 10:
         episode_return = 0
 
 print("Average Return: {:.3f}".format(np.mean(episodes_return)))
+print("Number of crashes: {:d}".format(crashes))
+print("Success rate: {:.2f}%".format(np.mean(success_rates)))
 
 env.close()
