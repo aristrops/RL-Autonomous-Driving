@@ -34,7 +34,7 @@ eps_decay = 0.997
 beta = 0.4
 beta_increment = 0.001
 batch_size = 32
-buffer_size = 50000
+buffer_size = 20000
 learning_starts = 200
 tau = 0.003
 
@@ -50,7 +50,7 @@ class QNet(nn.Module):
         self.fc3 = nn.Linear(256, output_dim)
 
     def forward(self, x):
-        x = torch.relu(self.fc1(x)) #pass through the shared layer
+        x = torch.relu(self.fc1(x))
         x = torch.relu(self.fc2(x))
         return self.fc3(x)
 
@@ -78,7 +78,7 @@ class DuelingQNet(nn.Module):
         advantage = torch.relu(self.advantage_fc(x))
         advantage = self.advantage(advantage)
 
-        q_values = value + advantage - advantage.mean(dim = 1, keepdim = True)
+        q_values = value + (advantage - advantage.mean(dim = 1, keepdim = True))
         return q_values
 
 
@@ -91,8 +91,9 @@ class ReplayBuffer:
         self.priorities = np.zeros((capacity,), dtype=np.float32)
         self.alpha = alpha
 
+    #add transitions to the buffer with priorities
     def push(self, state, action, reward, next_state, done, error):
-        priority = (error + 1e-5) ** self.alpha
+        priority = abs(error) + 1e-5
         if len(self.buffer) < self.capacity:
             self.buffer.append((state, action, reward, next_state, done))
         else:
@@ -101,13 +102,15 @@ class ReplayBuffer:
         self.priorities[self.position] = priority
         self.position = (self.position + 1) % self.capacity
 
+    #sample from the buffer
     def sample(self, batch_size, beta = 0.4):
         if len(self.buffer) == self.capacity:
             priorities = self.priorities
         else:
             priorities = self.priorities[:self.position]
 
-        probs = priorities / priorities.sum() #normalize
+        probs = priorities ** self.alpha
+        probs /= probs.sum()
         indices = np.random.choice(len(self.buffer), size=batch_size, p=probs)
         samples = [self.buffer[idx] for idx in indices]
 
@@ -120,7 +123,7 @@ class ReplayBuffer:
         return np.array(states), actions, rewards, np.array(next_states), dones, indices, np.array(weights, dtype=np.float32)
 
     def update_priorities(self, batch_indices, errors):
-        self.priorities[batch_indices] = (errors + 1e-5) ** self.alpha
+        self.priorities[batch_indices] = abs(errors) + 1e-5
 
     def __len__(self):
         return len(self.buffer)
@@ -191,7 +194,8 @@ class DoubleDQN:
         loss.backward()
         self.optimizer.step()
 
-    def update_target_net(self): #soft update of the target network
+    #soft update of the target network
+    def update_target_net(self):
         for target_param, param in zip(self.target_net.parameters(), self.q_net.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1 - self.tau))
 
@@ -224,7 +228,7 @@ class DuelingDQN:
 
         self.best_reward = -float("inf")
 
-    #use a epsilon greedy exploration
+    #use an epsilon greedy exploration
     def select_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0).to(device)
         if np.random.random() < self.epsilon:
@@ -267,7 +271,7 @@ class DuelingDQN:
         loss.backward()
         self.optimizer.step()
 
-    def update_target_net(self): #soft update of the target network
+    def update_target_net(self):
         for target_param, param in zip(self.target_net.parameters(), self.q_net.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1 - self.tau))
 
@@ -300,7 +304,7 @@ class D3QN:
 
         self.best_reward = -float("inf")
 
-    #use a epsilon greedy exploration
+    #use an epsilon greedy exploration
     def select_action(self, state):
         state = torch.FloatTensor(state).unsqueeze(0).to(device)
         if np.random.random() < self.epsilon:
@@ -344,7 +348,7 @@ class D3QN:
         loss.backward()
         self.optimizer.step()
 
-    def update_target_net(self): #soft update of the target network
+    def update_target_net(self):
         for target_param, param in zip(self.target_net.parameters(), self.q_net.parameters()):
             target_param.data.copy_(param.data * self.tau + target_param.data * (1 - self.tau))
 
@@ -420,7 +424,7 @@ def main():
         total_steps = 0
         episode_return = 0
 
-        # Training loop
+        #training loop
         for t in range(MAX_STEPS):
             episode_steps += 1
             total_steps += 1
@@ -429,10 +433,9 @@ def main():
 
             next_state, reward, done, truncated, _ = env.step(action)
             next_state = next_state.reshape(-1)
-            error = abs(reward)
 
             #store transition in memory
-            agent.store_experience(state, action, reward, next_state, done, error)
+            agent.store_experience(state, action, reward, next_state, done, 0)
 
             #train the model
             if total_steps > learning_starts:

@@ -2,12 +2,10 @@ import gymnasium
 import highway_env
 import numpy as np
 import torch
-from torch import nn
 import random
-from your_baseline import baseline_policy
-from training import DoubleDQN, DuelingDQN, D3QN, DuelingQNet
+from training import D3QN
 
-# Set the seed and create the environment
+#set the seed and create the environment
 np.random.seed(0)
 random.seed(0)
 torch.manual_seed(0)
@@ -25,7 +23,7 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 state_dim = env.observation_space.shape
 action_dim = env.action_space.n
 agent = D3QN(state_dim, action_dim)
-agent.q_net.load_state_dict(torch.load("Final_D3QN_2/last_model.pth", map_location=device))
+agent.q_net.load_state_dict(torch.load("d3qn_model.pth", map_location=device))
 agent.q_net.eval()
 
 # Evaluation loop
@@ -42,10 +40,9 @@ success_rates = []
 
 while episode <= 10:
     episode_steps += 1
-    # Select the action to be performed by the agent
+    #select the action to be performed by the agent
     state_tensor = torch.tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
     action = agent.select_greedy_action(state_tensor)
-    # action = baseline_policy(state)
 
     state, reward, done, truncated, _ = env.step(action)
     state = state.reshape(-1)

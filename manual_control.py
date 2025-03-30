@@ -10,6 +10,7 @@ env = gymnasium.make(env_name,
                      config={"manual_control": True, "lanes_count": 3, "ego_spacing": 1.5},
                      render_mode='human')
 
+
 env.reset()
 done, truncated = False, False
 
